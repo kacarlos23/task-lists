@@ -8,5 +8,6 @@ frontend-dev-*.log
 
 frontend/dist/
 .expo/
+.vercel/
 tmp/
 test-results/
