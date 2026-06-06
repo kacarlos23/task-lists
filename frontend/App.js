@@ -11,7 +11,7 @@ import {
   useWindowDimensions,
   View
 } from "react-native";
-import { Check, Plus, RefreshCw, Trash2 } from "lucide-react-native";
+import { Check, Edit3, Plus, RefreshCw, Save, Trash2, X } from "lucide-react-native";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:4001";
 
@@ -21,13 +21,16 @@ export default function App() {
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const [groupTitle, setGroupTitle] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
+  const [taskDueDate, setTaskDueDate] = useState("");
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [editingTask, setEditingTask] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId) || groups[0] || null,
+    () => groups.find((group) => group.id === selectedGroupId) || null,
     [groups, selectedGroupId]
   );
 
@@ -36,10 +39,28 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedGroupId && groups.length > 0) {
+    if (groups.length === 0) {
+      setSelectedGroupId(null);
+      return;
+    }
+
+    const selectedStillExists = groups.some((group) => group.id === selectedGroupId);
+    if (!selectedGroupId || !selectedStillExists) {
       setSelectedGroupId(groups[0].id);
     }
   }, [groups, selectedGroupId]);
+
+  useEffect(() => {
+    if (!error) {
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setError("");
+    }, 5000);
+
+    return () => clearTimeout(timeoutId);
+  }, [error]);
 
   async function api(path, options = {}) {
     const response = await fetch(`${API_URL}${path}`, {
@@ -68,6 +89,10 @@ export default function App() {
     return response.json();
   }
 
+  function showError(message) {
+    setError(message);
+  }
+
   async function loadGroups() {
     try {
       setError("");
@@ -75,7 +100,7 @@ export default function App() {
       const data = await api("/groups");
       setGroups(data.groups);
     } catch (loadError) {
-      setError(loadError.message);
+      showError(loadError.message);
     } finally {
       setLoading(false);
     }
@@ -98,7 +123,40 @@ export default function App() {
       setSelectedGroupId(data.group.id);
       setGroupTitle("");
     } catch (createError) {
-      setError(createError.message);
+      showError(createError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function startEditGroup(group) {
+    setEditingGroup({
+      id: group.id,
+      title: group.title
+    });
+  }
+
+  async function saveGroupTitle() {
+    const title = editingGroup?.title?.trim();
+    if (!editingGroup || !title) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError("");
+      const data = await api(`/groups/${editingGroup.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title })
+      });
+      setGroups((current) =>
+        current.map((group) =>
+          group.id === data.group.id ? { ...group, title: data.group.title } : group
+        )
+      );
+      setEditingGroup(null);
+    } catch (updateError) {
+      showError(updateError.message);
     } finally {
       setSaving(false);
     }
@@ -114,7 +172,7 @@ export default function App() {
         setSelectedGroupId(null);
       }
     } catch (deleteError) {
-      setError(deleteError.message);
+      showError(deleteError.message);
     } finally {
       setSaving(false);
     }
@@ -134,12 +192,21 @@ export default function App() {
       return;
     }
 
+    const dueDate = parseDisplayDate(taskDueDate);
+    if (dueDate === false) {
+      showError("Use uma data de prazo valida no formato DD/MM/AAAA ou deixe em branco.");
+      return;
+    }
+
     try {
       setSaving(true);
       setError("");
       const data = await api(`/groups/${selectedGroup.id}/tasks`, {
         method: "POST",
-        body: JSON.stringify({ title })
+        body: JSON.stringify({
+          title,
+          dueDate
+        })
       });
       setGroups((current) =>
         current.map((group) =>
@@ -147,35 +214,67 @@ export default function App() {
         )
       );
       setTaskTitle("");
+      setTaskDueDate("");
     } catch (createError) {
-      setError(createError.message);
+      showError(createError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function startEditTask(task) {
+    setEditingTask({
+      id: task.id,
+      title: task.title,
+      dueDate: formatDueDateInput(task.dueDate)
+    });
+  }
+
+  async function saveTaskEdit() {
+    const title = editingTask?.title?.trim();
+    if (!editingTask || !title) {
+      return;
+    }
+
+    const dueDate = parseDisplayDate(editingTask.dueDate);
+    if (dueDate === false) {
+      showError("Use uma data de prazo valida no formato DD/MM/AAAA ou deixe em branco.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError("");
+      const data = await api(`/tasks/${editingTask.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title,
+          dueDate
+        })
+      });
+      setGroups((current) => replaceTask(current, data.task));
+      setEditingTask(null);
+    } catch (updateError) {
+      showError(updateError.message);
     } finally {
       setSaving(false);
     }
   }
 
   async function toggleTask(task) {
+    const nextTask = { ...task, completed: !task.completed };
+    setGroups((current) => replaceTask(current, nextTask));
+
     try {
-      setSaving(true);
       setError("");
       const data = await api(`/tasks/${task.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ completed: !task.completed })
+        body: JSON.stringify({ completed: nextTask.completed })
       });
-      setGroups((current) =>
-        current.map((group) =>
-          group.id === data.task.groupId
-            ? {
-                ...group,
-                tasks: group.tasks.map((item) => (item.id === task.id ? data.task : item))
-              }
-            : group
-        )
-      );
+      setGroups((current) => replaceTask(current, data.task));
     } catch (toggleError) {
-      setError(toggleError.message);
-    } finally {
-      setSaving(false);
+      setGroups((current) => replaceTask(current, task));
+      showError(toggleError.message);
     }
   }
 
@@ -191,7 +290,7 @@ export default function App() {
         }))
       );
     } catch (deleteError) {
-      setError(deleteError.message);
+      showError(deleteError.message);
     } finally {
       setSaving(false);
     }
@@ -244,7 +343,14 @@ export default function App() {
           </Pressable>
         </View>
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {error ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+            <Pressable style={styles.errorClose} onPress={() => setError("")}>
+              <X size={16} color="#a33636" />
+            </Pressable>
+          </View>
+        ) : null}
 
         <View style={[styles.content, isNarrow && styles.contentNarrow]}>
           <View style={[styles.sidebar, isNarrow && styles.sidebarNarrow]}>
@@ -282,13 +388,18 @@ export default function App() {
                         {remaining} pendente{remaining === 1 ? "" : "s"}
                       </Text>
                     </View>
-                    <Pressable
-                      style={styles.deleteSmall}
-                      accessibilityLabel={`Excluir lista ${group.title}`}
-                      onPress={() => requestDeleteGroup(group)}
-                    >
-                      <Trash2 size={15} color={active ? "#245a41" : "#7b8580"} />
-                    </Pressable>
+                    <View style={styles.rowActions}>
+                      <Pressable style={styles.smallAction} onPress={() => startEditGroup(group)}>
+                        <Edit3 size={15} color={active ? "#245a41" : "#7b8580"} />
+                      </Pressable>
+                      <Pressable
+                        style={styles.smallAction}
+                        accessibilityLabel={`Excluir lista ${group.title}`}
+                        onPress={() => requestDeleteGroup(group)}
+                      >
+                        <Trash2 size={15} color={active ? "#245a41" : "#7b8580"} />
+                      </Pressable>
+                    </View>
                   </Pressable>
                 );
               })}
@@ -303,15 +414,18 @@ export default function App() {
             ) : selectedGroup ? (
               <>
                 <View style={styles.panelHeader}>
-                  <View>
+                  <View style={styles.panelTitleBlock}>
                     <Text style={styles.groupTitle}>{selectedGroup.title}</Text>
                     <Text style={styles.panelMeta}>
                       {completedCount} de {taskCount} concluido{taskCount === 1 ? "" : "s"}
                     </Text>
                   </View>
+                  <Pressable style={styles.iconButton} onPress={() => startEditGroup(selectedGroup)}>
+                    <Edit3 size={17} color="#13201a" />
+                  </Pressable>
                 </View>
 
-                <View style={styles.formRowWide}>
+                <View style={[styles.formRowWide, isNarrow && styles.formRowStack]}>
                   <TextInput
                     value={taskTitle}
                     onChangeText={setTaskTitle}
@@ -320,6 +434,19 @@ export default function App() {
                     placeholderTextColor="#7b8580"
                     style={styles.inputWide}
                   />
+                  <View style={[styles.dateField, isNarrow && styles.dateFieldNarrow]}>
+                    <Text style={styles.dateLabel}>Prazo da tarefa</Text>
+                    <TextInput
+                      value={taskDueDate}
+                      onChangeText={(value) => setTaskDueDate(maskDateInput(value))}
+                      placeholder="DD/MM/AAAA"
+                      placeholderTextColor="#7b8580"
+                      keyboardType="numeric"
+                      maxLength={10}
+                      style={[styles.dateInput, isNarrow && styles.dateInputNarrow]}
+                    />
+                    <Text style={styles.dateHint}>Opcional</Text>
+                  </View>
                   <Pressable
                     style={[styles.primaryButton, isNarrow && styles.primaryButtonNarrow]}
                     onPress={createTask}
@@ -338,24 +465,13 @@ export default function App() {
                     </View>
                   ) : (
                     selectedGroup.tasks.map((task) => (
-                      <View key={task.id} style={styles.taskItem}>
-                        <Pressable
-                          style={[styles.checkbox, task.completed && styles.checkboxChecked]}
-                          onPress={() => toggleTask(task)}
-                        >
-                          {task.completed ? <Check size={16} color="#ffffff" /> : null}
-                        </Pressable>
-                        <Text style={[styles.taskText, task.completed && styles.taskTextDone]}>
-                          {task.title}
-                        </Text>
-                        <Pressable
-                          style={styles.deleteButton}
-                          accessibilityLabel={`Excluir item ${task.title}`}
-                          onPress={() => requestDeleteTask(task)}
-                        >
-                          <Trash2 size={17} color="#7b8580" />
-                        </Pressable>
-                      </View>
+                      <TaskRow
+                        key={task.id}
+                        task={task}
+                        onToggle={toggleTask}
+                        onEdit={startEditTask}
+                        onDelete={requestDeleteTask}
+                      />
                     ))
                   )}
                 </ScrollView>
@@ -368,6 +484,22 @@ export default function App() {
           </View>
         </View>
 
+        <EditGroupModal
+          visible={Boolean(editingGroup)}
+          editingGroup={editingGroup}
+          saving={saving}
+          onChange={setEditingGroup}
+          onCancel={() => setEditingGroup(null)}
+          onSave={saveGroupTitle}
+        />
+        <EditTaskModal
+          visible={Boolean(editingTask)}
+          editingTask={editingTask}
+          saving={saving}
+          onChange={setEditingTask}
+          onCancel={() => setEditingTask(null)}
+          onSave={saveTaskEdit}
+        />
         <DeleteConfirmationModal
           visible={Boolean(confirmDelete)}
           item={confirmDelete}
@@ -377,6 +509,109 @@ export default function App() {
         />
       </View>
     </SafeAreaView>
+  );
+}
+
+function TaskRow({ task, onToggle, onEdit, onDelete }) {
+  const overdue = isTaskOverdue(task);
+
+  return (
+    <View style={[styles.taskItem, overdue && styles.taskItemOverdue]}>
+      <Pressable
+        style={[styles.checkbox, task.completed && styles.checkboxChecked]}
+        onPress={() => onToggle(task)}
+      >
+        {task.completed ? <Check size={16} color="#ffffff" /> : null}
+      </Pressable>
+      <View style={styles.taskContent}>
+        <Text style={[styles.taskText, task.completed && styles.taskTextDone]}>{task.title}</Text>
+        {task.dueDate ? (
+          <Text style={[styles.dueDateText, overdue && styles.dueDateOverdue]}>
+            Prazo: {formatDueDate(task.dueDate)}
+          </Text>
+        ) : null}
+      </View>
+      <View style={styles.rowActions}>
+        <Pressable style={styles.deleteButton} onPress={() => onEdit(task)}>
+          <Edit3 size={16} color="#7b8580" />
+        </Pressable>
+        <Pressable
+          style={styles.deleteButton}
+          accessibilityLabel={`Excluir item ${task.title}`}
+          onPress={() => onDelete(task)}
+        >
+          <Trash2 size={17} color="#7b8580" />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function EditGroupModal({ visible, editingGroup, saving, onChange, onCancel, onSave }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Editar lista</Text>
+          <TextInput
+            value={editingGroup?.title || ""}
+            onChangeText={(title) => onChange({ ...editingGroup, title })}
+            onSubmitEditing={onSave}
+            placeholder="Nome da lista"
+            placeholderTextColor="#7b8580"
+            style={[styles.inputWide, styles.modalInput]}
+          />
+          <View style={styles.modalActions}>
+            <Pressable style={styles.secondaryButton} onPress={onCancel} disabled={saving}>
+              <Text style={styles.secondaryButtonText}>Cancelar</Text>
+            </Pressable>
+            <Pressable style={styles.primaryButton} onPress={onSave} disabled={saving}>
+              <Save size={16} color="#ffffff" />
+              <Text style={styles.primaryButtonText}>Salvar</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function EditTaskModal({ visible, editingTask, saving, onChange, onCancel, onSave }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Editar item</Text>
+          <TextInput
+            value={editingTask?.title || ""}
+            onChangeText={(title) => onChange({ ...editingTask, title })}
+            onSubmitEditing={onSave}
+            placeholder="Titulo do item"
+            placeholderTextColor="#7b8580"
+            style={[styles.inputWide, styles.modalInput]}
+          />
+          <TextInput
+            value={editingTask?.dueDate || ""}
+            onChangeText={(dueDate) => onChange({ ...editingTask, dueDate: maskDateInput(dueDate) })}
+            placeholder="Prazo DD/MM/AAAA"
+            placeholderTextColor="#7b8580"
+            keyboardType="numeric"
+            maxLength={10}
+            style={[styles.inputWide, styles.modalInput]}
+          />
+          <Text style={styles.modalHint}>Data de prazo da tarefa. Opcional.</Text>
+          <View style={styles.modalActions}>
+            <Pressable style={styles.secondaryButton} onPress={onCancel} disabled={saving}>
+              <Text style={styles.secondaryButtonText}>Cancelar</Text>
+            </Pressable>
+            <Pressable style={styles.primaryButton} onPress={onSave} disabled={saving}>
+              <Save size={16} color="#ffffff" />
+              <Text style={styles.primaryButtonText}>Salvar</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -418,6 +653,70 @@ function DeleteConfirmationModal({ visible, item, saving, onCancel, onConfirm })
       </View>
     </Modal>
   );
+}
+
+function replaceTask(groups, replacementTask) {
+  return groups.map((group) =>
+    group.id === replacementTask.groupId
+      ? {
+          ...group,
+          tasks: group.tasks.map((task) =>
+            task.id === replacementTask.id ? replacementTask : task
+          )
+        }
+      : group
+  );
+}
+
+function isTaskOverdue(task) {
+  if (!task.dueDate || task.completed) {
+    return false;
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dueDate = new Date(`${task.dueDate}T00:00:00`);
+  return dueDate < today;
+}
+
+function formatDueDate(value) {
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function formatDueDateInput(value) {
+  return value ? formatDueDate(value) : "";
+}
+
+function maskDateInput(value) {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) {
+    return digits;
+  }
+  if (digits.length <= 4) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function parseDisplayDate(value) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(trimmed);
+  if (!match) {
+    return false;
+  }
+
+  const [, day, month, year] = match;
+  const isoDate = `${year}-${month}-${day}`;
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== isoDate) {
+    return false;
+  }
+
+  return isoDate;
 }
 
 const styles = StyleSheet.create({
@@ -468,8 +767,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginTop: 5
   },
-  error: {
-    color: "#a33636",
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     backgroundColor: "#fff1f1",
     borderColor: "#f0caca",
     borderWidth: 1,
@@ -477,6 +778,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginBottom: 12
+  },
+  errorText: {
+    flex: 1,
+    color: "#a33636",
+    fontSize: 14
+  },
+  errorClose: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center"
   },
   content: {
     flex: 1,
@@ -517,6 +829,10 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 18
   },
+  formRowStack: {
+    flexDirection: "column",
+    alignItems: "stretch"
+  },
   input: {
     flex: 1,
     height: 42,
@@ -538,6 +854,37 @@ const styles = StyleSheet.create({
     backgroundColor: "#fbfcfb",
     paddingHorizontal: 13,
     fontSize: 15
+  },
+  dateInput: {
+    width: 140,
+    height: 46,
+    borderColor: "#d9e1dc",
+    borderWidth: 1,
+    borderRadius: 8,
+    color: "#13201a",
+    backgroundColor: "#fbfcfb",
+    paddingHorizontal: 13,
+    fontSize: 15
+  },
+  dateField: {
+    width: 150
+  },
+  dateFieldNarrow: {
+    width: "100%"
+  },
+  dateLabel: {
+    color: "#13201a",
+    fontSize: 12,
+    fontWeight: "800",
+    marginBottom: 4
+  },
+  dateHint: {
+    color: "#7b8580",
+    fontSize: 11,
+    marginTop: 4
+  },
+  dateInputNarrow: {
+    width: "100%"
   },
   iconButton: {
     width: 42,
@@ -602,7 +949,8 @@ const styles = StyleSheet.create({
     borderColor: "#b9d8c7"
   },
   groupText: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   groupName: {
     color: "#13201a",
@@ -617,9 +965,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4
   },
-  deleteSmall: {
-    width: 32,
-    height: 32,
+  rowActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
+  smallAction: {
+    width: 30,
+    height: 30,
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center"
@@ -637,7 +990,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 12,
     marginBottom: 16
+  },
+  panelTitleBlock: {
+    flex: 1,
+    minWidth: 0
   },
   groupTitle: {
     color: "#13201a",
@@ -669,6 +1027,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10
   },
+  taskItemOverdue: {
+    borderColor: "#f0caca",
+    backgroundColor: "#fffafa"
+  },
   checkbox: {
     width: 25,
     height: 25,
@@ -682,8 +1044,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#256f4c",
     borderColor: "#256f4c"
   },
-  taskText: {
+  taskContent: {
     flex: 1,
+    minWidth: 0
+  },
+  taskText: {
     color: "#13201a",
     fontSize: 16,
     lineHeight: 22
@@ -691,6 +1056,15 @@ const styles = StyleSheet.create({
   taskTextDone: {
     color: "#819089",
     textDecorationLine: "line-through"
+  },
+  dueDateText: {
+    color: "#68756e",
+    fontSize: 12,
+    marginTop: 3
+  },
+  dueDateOverdue: {
+    color: "#a33636",
+    fontWeight: "800"
   },
   deleteButton: {
     width: 36,
@@ -766,6 +1140,16 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     marginTop: 8
   },
+  modalInput: {
+    flex: 0,
+    width: "100%",
+    marginTop: 14
+  },
+  modalHint: {
+    color: "#7b8580",
+    fontSize: 12,
+    marginTop: 6
+  },
   modalItemName: {
     color: "#13201a",
     fontSize: 15,
@@ -785,7 +1169,7 @@ const styles = StyleSheet.create({
     marginTop: 18
   },
   secondaryButton: {
-    height: 42,
+    height: 46,
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
@@ -800,7 +1184,7 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
   dangerButton: {
-    height: 42,
+    height: 46,
     borderRadius: 8,
     flexDirection: "row",
     alignItems: "center",
