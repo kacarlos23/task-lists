@@ -1,0 +1,12 @@
+node_modules/
+npm-debug.log*
+
+backend/data/
+backend-dev.log
+frontend-dev.log
+frontend-dev-*.log
+
+frontend/dist/
+.expo/
+tmp/
+test-results/

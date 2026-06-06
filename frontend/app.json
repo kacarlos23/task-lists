@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Task Lists",
+    "slug": "task-lists",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": [
+      "web"
+    ],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-asset"
+    ]
+  }
+}
