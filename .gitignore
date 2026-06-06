@@ -3,6 +3,8 @@ npm-debug.log*
 
 backend/data/
 backend-dev.log
+backend-prod.log
+cloudflared.log
 frontend-dev.log
 frontend-dev-*.log
 
