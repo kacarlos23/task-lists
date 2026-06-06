@@ -12,7 +12,12 @@ function createApp(db) {
     cors({
       origin(origin, callback) {
         const allowedOrigins = parseOrigins(process.env.CORS_ORIGIN);
-        if (!origin || isLocalDevelopmentOrigin(origin) || allowedOrigins.includes(origin)) {
+        if (
+          !origin ||
+          isLocalDevelopmentOrigin(origin) ||
+          isVercelOrigin(origin) ||
+          allowedOrigins.includes(origin)
+        ) {
           callback(null, true);
           return;
         }
@@ -186,6 +191,15 @@ function isLocalDevelopmentOrigin(origin) {
       (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
       (url.protocol === "http:" || url.protocol === "https:")
     );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isVercelOrigin(origin) {
+  try {
+    const url = new URL(origin);
+    return url.protocol === "https:" && url.hostname.endsWith(".vercel.app");
   } catch (_error) {
     return false;
   }
